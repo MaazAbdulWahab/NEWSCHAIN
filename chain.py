@@ -8,13 +8,15 @@ from utils import generate_random_string
 import hashlib
 import datetime
 
-
+### Create Connection
 rpcuser = "multichainrpc"
 rpcpassword = "D2UbRkoaprz1ex7wXqgUA2YC3GYN9Xq4diKwpHTJzvvG"
 rpchost = "127.0.0.1"
 rpcport = "6828"
 chainname = "NEWSCHAIN"
 mc = multichain.MultiChainClient(rpchost, rpcport, rpcuser, rpcpassword)
+
+### We created some addresses using UI and designate some as publishers and some as validators
 
 publisherAddresses = [
     "15dK5rLNS7a269GBXJ6W4Z86AYCVH4JvnVPq53",
@@ -26,11 +28,19 @@ validatorAddresses = [
     "12xVC1u4oo8CD4PY1WqZP1aCXAZvFhVF4zeJ5W",
 ]
 
+### We require 4 distinct streams
+# 1. For publishing news
+# 2. For publishin validations
+# 3. For publishing final article in case it passes all validations
+# 4. For putting unique identifier for news
+
 streamPublishing = "PUBLISHED"
 streamValidations = "VALIDATIONS"
 streamFinalPublication = "PUBLISHED_FINAL"
 streamUniqueIdentifiersNews = "NEWSIDS"
 
+
+### Create streams and subscribe to it.
 
 if not mc.liststreams(streamPublishing):
     mc.create("stream", streamPublishing, True)
@@ -52,7 +62,9 @@ mc.subscribe(
         streamUniqueIdentifiersNews,
     ]
 )
-"""
+
+### Picking up 10 random news from files.
+
 data = pd.read_csv("WELFake_Dataset.csv")
 
 
@@ -60,6 +72,11 @@ data = data.dropna()
 
 toPick = [random.randint(0, 50000) for i in range(10)]
 sample = data.iloc[toPick]
+
+
+### For each of the random picking, we push it to publishing stream,
+### with the address of publisher and its signature.
+### Its unique identifer is also being pushed to unique identifier stream
 
 for index, row in sample.iterrows():
     identifer = generate_random_string(10)
@@ -77,12 +94,18 @@ for index, row in sample.iterrows():
     )
     mc.publish(streamUniqueIdentifiersNews, "IDENTIFIERS", {"text": identifer})
 
-"""
+
+### We mimic the picking up of last few news items (last 2 minutes)
+
 recents = mc.liststreamkeyitems(
     streamUniqueIdentifiersNews, "IDENTIFIERS", False, 100, -100
 )
 now = datetime.datetime.now().timestamp()
-recents = list(filter(lambda x: dict(x)["blocktime"] > now - 3600, recents))
+recents = list(filter(lambda x: dict(x)["blocktime"] > now - 120, recents))
+
+
+### For all those recent news pickups , we let validators score them for fakeness
+### and push their verdict to validation stream.
 
 for r in recents:
     identifier = dict(r)["data"].get("text")
@@ -92,8 +115,13 @@ for r in recents:
         news = dict(findNews[0])["data"].get("json")
         if not news:
             continue
+        ## We have the news here and after that , we let all the
+        ## validators score them
+
         news = news.get("news")
         for vals in validatorAddresses:
+            ## Currently all validators use the same scoring function
+            ## Verdicts are pushed on the validation stream.
             prediction = generate([news])
             mc.publish(
                 streamValidations,
@@ -107,10 +135,17 @@ for r in recents:
                 },
             )
 
+### Now again for all those recents
+
 
 for r in recents:
     identifier = dict(r)["data"].get("text")
+    ### get recent identifiers
     if identifier:
+        ### pull out all validator verdicts
+        ### in our system , trust is an asset , which is used for taking
+        ### weighting average of verdict score
+        ### trust can be increased or decreased
         findVerdicts = mc.liststreamkeyitems(streamValidations, identifier)
         numerator = 0
         denominator = 0
@@ -124,6 +159,8 @@ for r in recents:
         try:
             scoreOverall = float(numerator) / float(denominator)
 
+            ### overall positive verdict will be pushed in the final publication
+            ### stream.
             if scoreOverall >= 0.5:
                 mc.publish(
                     streamFinalPublication,
