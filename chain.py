@@ -7,6 +7,7 @@ from generatePrediction import generate
 from utils import generate_random_string
 import hashlib
 import datetime
+import time
 
 ### Create Connection
 rpcuser = "multichainrpc"
@@ -101,8 +102,15 @@ recents = mc.liststreamkeyitems(
     streamUniqueIdentifiersNews, "IDENTIFIERS", False, 100, -100
 )
 now = datetime.datetime.now().timestamp()
-recents = list(filter(lambda x: dict(x)["blocktime"] > now - 120, recents))
-
+time.sleep(2)
+recents = list(
+    filter(
+        lambda x: dict(x).get("blocktime") and dict(x)["blocktime"] > now - 60, recents
+    )
+)
+print("Picked Recents are")
+for r in recents:
+    print(dict(r)["data"].get("text"))
 
 ### For all those recent news pickups , we let validators score them for fakeness
 ### and push their verdict to validation stream.
@@ -122,7 +130,13 @@ for r in recents:
         for vals in validatorAddresses:
             ## Currently all validators use the same scoring function
             ## Verdicts are pushed on the validation stream.
+            print("Validator Address")
+            print(vals)
+            print("News Identifier")
+            print(identifier)
+            print("Prediction")
             prediction = generate([news])
+            print(prediction)
             mc.publish(
                 streamValidations,
                 identifier,
@@ -137,7 +151,7 @@ for r in recents:
 
 ### Now again for all those recents
 
-
+print("Final System Phase")
 for r in recents:
     identifier = dict(r)["data"].get("text")
     ### get recent identifiers
@@ -146,6 +160,8 @@ for r in recents:
         ### in our system , trust is an asset , which is used for taking
         ### weighting average of verdict score
         ### trust can be increased or decreased
+        print("Identifier")
+        print(identifier)
         findVerdicts = mc.liststreamkeyitems(streamValidations, identifier)
         numerator = 0
         denominator = 0
@@ -158,7 +174,8 @@ for r in recents:
             denominator += trust
         try:
             scoreOverall = float(numerator) / float(denominator)
-
+            print("score Overall")
+            print(scoreOverall)
             ### overall positive verdict will be pushed in the final publication
             ### stream.
             if scoreOverall >= 0.5:
